@@ -138,7 +138,8 @@ def app():
     st.markdown("<h1 style='text-align: center;'>Analisador de Matrículas Imobiliárias para Operações de Crédito</h1>",
                 unsafe_allow_html=True)
 
-    uploaded_file = st.sidebar.file_uploader("Escolha um arquivo PDF (contendo apenas texto):", type="pdf")
+    uploaded_file = st.sidebar.file_uploader("Envie uma Certidão de Matrícula Imobiliária num arquivo PDF (contendo "
+                                             "apenas texto):", type="pdf")
     if uploaded_file is not None:
         pdf_text = extract_pdf_pages(uploaded_file)
         print("PDF Text:", pdf_text)
