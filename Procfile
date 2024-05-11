@@ -1,0 +1,1 @@
+web: streamlit run analisador-de-matriculas.py
