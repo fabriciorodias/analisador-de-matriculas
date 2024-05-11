@@ -1,1 +1,1 @@
-web: streamlit run analisador-de-matriculas.py
+web: sh setup.sh && streamlit run analisador-de-matriculas.py
