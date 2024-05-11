@@ -24,6 +24,11 @@ O aplicativo permite que você faça upload de um arquivo PDF. Ele então extrai
 A análise inclui informações como o nome do proprietário, o endereço do imóvel, a área do terreno, a área construída, o número da matrícula, a data de registro, a data de atualização, a data de validade e o cartório de registro.
 Por fim, a análise informa se o imóvel está APTO ou INAPTO para ser usado como garantia em uma operação de crédito bancárias.
 
+#### Google Colab
+O projeto também está disponível no Google Colab. Para acessá-lo, clique no link abaixo:
+
+https://colab.research.google.com/drive/1hqVXuSI32w68xXiC55gIcGOTJ3RcS-_u?usp=sharing
+
 
 #### Requisitos
 Para executar este projeto, você precisará das seguintes bibliotecas Python:  
