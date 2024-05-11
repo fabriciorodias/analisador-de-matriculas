@@ -2,13 +2,18 @@
 
 O app faz é o projeto de @fabriciorodias para a Imersão IA Alura - Google.
 
+Feito com Python, Streamlit e Google AI.
+
 O app já está disponível no Heroku. Para acessá-lo, basta clicar no link abaixo:
 
 https://analisador-de-matriculas-874a9c6e8cb5.herokuapp.com/
 
 #### Como utilizar
-Duas certidões de matrícula imobiliária estão disponíveis no diretório 'certidoes'. Para testar o app, basta fazer o upload de uma dessas certidões no app.
-São certidões duas certidões públicas, utilizadas para fins de teste. O app funciona com qualquer certidão de matrícula imobiliária, desde que esteja em formato PDF (texto).
+Duas certidões de matrícula imobiliária estão disponíveis no diretório 'certidoes'. Para testar o app, basta fazer o upload de uma dessas certidões na interface do usuário.
+
+São duas certidões públicas, utilizadas para fins de teste.
+
+O app funciona com qualquer certidão de matrícula imobiliária, desde que esteja em formato PDF (texto).
 
 Este projeto é um analisador de matrículas imobiliárias para operações de crédito. Ele foi desenvolvido por @fabriciorodias e utiliza a API do Google AI para analisar documentos PDF e extrair informações relevantes.
 
