@@ -1,10 +1,10 @@
 ### Analisador de Matrículas Imobiliárias para Operações de Crédito
 
-O app faz é o projeto de @fabriciorodias para a Imersão IA Alura - Google.
+Este app é o projeto de @fabriciorodias para a Imersão IA Alura - Google.
 
 Feito com Python, Streamlit e Google AI.
 
-O app já está disponível no Heroku. Para acessá-lo, basta clicar no link abaixo:
+Ele já está online e disponível via Heroku. Para acessá-lo, basta clicar no link abaixo:
 
 https://analisador-de-matriculas-874a9c6e8cb5.herokuapp.com/
 
