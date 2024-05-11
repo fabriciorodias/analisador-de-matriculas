@@ -1,5 +1,7 @@
 ### Analisador de Matrículas Imobiliárias para Operações de Crédito
 
+Faz a análise da certidão de um imóvel e informa se ele está APTO ou INAPTO para ser usado como garantia numa operação de crédito bancário.
+
 Este app é o projeto de @fabriciorodias para a Imersão IA Alura - Google.
 
 Feito com Python, Streamlit e Google AI.
@@ -17,7 +19,10 @@ O app funciona com qualquer certidão de matrícula imobiliária, desde que este
 
 Este projeto é um analisador de matrículas imobiliárias para operações de crédito. Ele foi desenvolvido por @fabriciorodias e utiliza a API do Google AI para analisar documentos PDF e extrair informações relevantes.
 
-O aplicativo permite que você faça upload de um arquivo PDF. Ele então extrai o texto do PDF e solicita à API do Google AI que analise o texto. O resultado da análise é então exibido na interface do usuário.  
+O aplicativo permite que você faça upload de um arquivo PDF. Ele então extrai o texto do PDF e solicita à API do Google AI que analise o texto. O resultado da análise é então exibido na interface do usuário.
+
+A análise inclui informações como o nome do proprietário, o endereço do imóvel, a área do terreno, a área construída, o número da matrícula, a data de registro, a data de atualização, a data de validade e o cartório de registro.
+Por fim, a análise informa se o imóvel está APTO ou INAPTO para ser usado como garantia em uma operação de crédito bancárias.
 
 
 #### Requisitos
