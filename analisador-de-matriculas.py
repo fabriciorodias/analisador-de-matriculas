@@ -16,6 +16,11 @@ from pdf2image.exceptions import PDFPageCountError
 import shutil
 from tesseract_ocr import get_text_from_image_with_tesseract
 from bnb_style import footer
+from models import ProprietarioAtual, GravameRestricao, TextoAnalise, ResultadoAnalise
+from prompts import generate_optimized_prompt
+import json
+import re
+from pydantic import ValidationError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -66,6 +71,65 @@ model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest",
 
 
 # --------------------------------------------------------------
+# Função para extrair objetos JSON de um texto
+# --------------------------------------------------------------
+def extract_json(text_response: str) -> list:
+    json_objects = []
+    json_str = ""
+    in_json = False
+    braces_count = 0
+
+    for char in text_response:
+        if char == '{':
+            if not in_json:
+                in_json = True
+                json_str = char
+            else:
+                json_str += char
+            braces_count += 1
+        elif char == '}':
+            json_str += char
+            braces_count -= 1
+            if braces_count == 0 and in_json:
+                try:
+                    json_obj = json.loads(json_str)
+                    json_objects.append(json_obj)
+                except json.JSONDecodeError:
+                    pass
+                json_str = ""
+                in_json = False
+        elif in_json:
+            json_str += char
+
+    return json_objects
+
+
+
+# --------------------------------------------------------------
+# Função para validar objetos JSON com um modelo Pydantic
+# --------------------------------------------------------------
+def validate_json_with_model(model_class, json_data):
+    validated_data = []
+    validation_errors = []
+    if isinstance(json_data, list):
+        for item in json_data:
+            try:
+                model_instance = model_class(**item)
+                validated_data.append(model_instance.dict())
+            except ValidationError as e:
+                validation_errors.append({"error": str(e), "data": item})
+    elif isinstance(json_data, dict):
+        try:
+            model_instance = model_class(**json_data)
+            validated_data.append(model_instance.dict())
+        except ValidationError as e:
+            validation_errors.append({"error": str(e), "data": json_data})
+    else:
+        raise ValueError("Invalid JSON data type. Expected dict or list.")
+    return validated_data, validation_errors
+
+
+# --------------------------------------------------------------
 # Widget de upload de arquivo PDF da Certidão de Matrícula
 # --------------------------------------------------------------
 def handle_file_upload():
@@ -94,44 +158,33 @@ def extract_pdf_pages(file) -> list[str]:
     progress_bar = st.progress(0, progress_text)
     progress_step = 1 / num_pages
 
-    # Para cada página no PDF
-    for index in range(num_pages):
-        # Extrai o texto da página
-        page = pdf_reader.pages[index].extract_text()
-        word_count = len(page.split())
-        logging.info(f"Texto extraído da página {index}: {page[:100]}... (total de {word_count} palavras)")
+    # Verifica apenas a primeira página para determinar se o PDF é de texto ou escaneado
+    first_page = pdf_reader.pages[0].extract_text()
+    first_page_word_count = len(first_page.split())
+    logging.info(
+        f"Texto extraído da primeira página: {first_page[:100]}... (total de {first_page_word_count} palavras)")
 
-        # Se menos de 100 palavras foram extraídas, assume que a página é uma imagem escaneada
-        # ATENÇÃO!!!!!!!: Corrigir para que, uma vez que tenha chegado aqui na primeira iteração, não
-        # seja necessário verificar as demais páginas para a existência de texto, tratar todas
-        # as páginas como imagens escaneadas.
-        if word_count < 100:
-            logging.info(f"Página {index} parece ser de um documento escaneado. Inicializando OCR...")
-            images = convert_pdf_to_jpeg(file)
-            logging.info(f"Imagem extraída do PDF salva em: {images}")
-            logging.info("Chamando a função de extração de texto da imagem...")
+    all_pages_as_images = first_page_word_count < 100
 
-            # DESATIVADO para testes com Tesseract OCR
-            # Extrai o texto da imagem com a API da OpenAI (GPT-4o)
-            # parts = get_text_from_image_with_vision(output_file_path)
-
-            # Itera sobre todas as imagens (uma por página) e extrai o texto com Tesseract OCR
-            for i, image in enumerate(images):
-                text_from_image = get_text_from_image_with_tesseract(image)
-                parts.append(f"--- PAGE {i} (OCR) ---")
-                parts.append(text_from_image)
-                # Atualiza a barra de progresso
-                progress_bar.progress(min(1.0, progress_step * (index + 1 + i)), progress_text)
-
-            break  # Todas as páginas foram tratadas como imagens, então sair do loop
-
-        # Append the page text to the parts list
-        parts.append(f"--- PAGE {index} ---")
-        parts.append(page)
+    if all_pages_as_images:
+        logging.info("Primeira página parece ser de um documento escaneado. Inicializando OCR para todas as páginas...")
+        images = convert_pdf_to_jpeg(file)
+        for i, image in enumerate(images):
+            text_from_image = get_text_from_image_with_tesseract(image)
+            parts.append(f"--- PAGE {i} (OCR) ---")
+            parts.append(text_from_image)
+            progress_bar.progress(min(1.0, progress_step * (i + 1)), f"Parece que o PDF é um documento "
+                                                                     f"escaneado. {progress_text}")
+    else:
+        logging.info("Documento identificado como PDF de texto.")
+        for index in range(num_pages):
+            page = pdf_reader.pages[index].extract_text()
+            parts.append(f"--- PAGE {index} ---")
+            parts.append(page)
+            progress_bar.progress(min(1.0, progress_step * (index + 1)), progress_text)
 
     logging.info("Extração de texto do PDF concluída.")
     progress_bar.empty()
-
     return parts
 
 
@@ -149,7 +202,6 @@ def convert_pdf_to_jpeg(uploaded_file):
         tmp.seek(0)
         tmp_path = tmp.name
 
-    images = []
     try:
         logging.info(f"Conteúdo da variável 'tmp_path': {tmp_path}")
         images = convert_from_path(tmp_path)
@@ -161,6 +213,8 @@ def convert_pdf_to_jpeg(uploaded_file):
                 jpeg_paths.append(output_file_path)
     except PDFPageCountError:
         st.error("O arquivo enviado não é um arquivo PDF válido.")
+    finally:
+        os.remove(tmp_path)
 
     return jpeg_paths
 
@@ -171,14 +225,23 @@ def convert_pdf_to_jpeg(uploaded_file):
 # start_chat_with_pdf_text. Caso o PDF seja uma imagem
 # escaneada, exibir uma mensagem de erro.
 # --------------------------------------------------------------
-def handle_pdf_analysis(uploaded_file) -> str:
+def handle_pdf_analysis(uploaded_file) -> dict:
     if uploaded_file is not None:
         pdf_text = extract_pdf_pages(uploaded_file)
         logging.info("Texto do PDF extraído. Enviando para análise da API...")
-        convo = start_chat_with_pdf_text(pdf_text)
-        logging.info("Análise concluída.")
-        return convo.last.text
-    return ""
+        response_text = start_chat_with_pdf_text(pdf_text)
+        logging.info("Análise concluída. Extraindo e validando JSON...")
+
+        json_objects = extract_json(response_text)
+        validated, errors = validate_json_with_model(TextoAnalise, json_objects)
+
+        if errors:
+            st.error("Erros na validação do JSON: " + str(errors))
+            return {}
+
+        logging.info("Enviando resultado formatado para exibição...")
+        return validated[0] if validated else {}
+    return {}
 
 
 # --------------------------------------------------------------
@@ -187,53 +250,16 @@ def handle_pdf_analysis(uploaded_file) -> str:
 # Ao final da execução, retorna o objeto de conversa.
 # --------------------------------------------------------------
 def start_chat_with_pdf_text(pdf_text: list[str]):
+    document_text = "\n".join(pdf_text)
+    optimized_prompt = generate_optimized_prompt(document_text)
 
     with st.spinner('Texto da certidão em análise...'):
-        convo = model.start_chat(history=[
-            {
-                "role": "user",
-                "parts": [
-                    "Exemplo de Análise:## Análise da Certidão de Inteiro Teor da Matrícula [NÚMERO DA "
-                    "MATRÍCULA]**Proprietário Atual:**[INFORMAÇÕES SOBRE O PROPRIETÁRIO ATUAL: Nome, nacionalidade, "
-                    "estado civil, profissão, documentos de identificação e data de aquisição do "
-                    "imóvel]**Gravames/Restrições:**[LISTA DE GRAVAMES E/OU RESTRIÇÕES, incluindo o tipo, "
-                    "data de registro/averbação, número do registro/averbação e dados relevantes sobre o processo "
-                    "judicial ou administrativo, se aplicável]**Observações:*** [INFORMAÇÕES ADICIONAIS RELEVANTES, "
-                    "como resultados de consultas à CNIB, data de emissão da certidão e necessidade de atualização das "
-                    "informações]**Situação do Imóvel**[Informação se o imóvel encontra-se APTO para ser alienado "
-                    "fiduciariamente como garantia em operação de crédito ou se o imóvel encontra-se INAPTO para ser "
-                    "alienado fiduciariamente por existirem gravames e/ou restrições ainda não baixadas/canceladas na "
-                    "data da emissão do documento]Instruções para a LLM:Com base no exemplo de análise acima, "
-                    "analise a certidão de inteiro teor fornecida pelo usuário via arquivo e extraia as seguintes "
-                    "informações:Proprietário Atual: Identifique o proprietário atual do imóvel, incluindo seu nome "
-                    "completo, estado civil, profissão, documentos de identificação e data de aquisição do "
-                    "imóvel.Gravames/Restrições: Liste os gravames e/ou restrições que incidem sobre o imóvel e que "
-                    "gerem sua inalienabilidade, especificando o tipo (ex: hipoteca, penhora, arresto), "
-                    "data de registro/averbação, número do registro/averbação e informações relevantes do processo "
-                    "judicial ou administrativo relacionado, se aplicável.Obs.: Inclua qualquer outra informação "
-                    "relevante sobre a situação do imóvel, como resultados de consultas à CNIB, data de emissão da "
-                    "certidão e necessidade de atualização das informações.Situação do Imóvel: Como resultado final, "
-                    "classifique o imóvel como APTO, caso inexistam restrições/gravames de indisponibilidade vigentes "
-                    "na data do documento, ou INAPTO, caso existam.O usuário iniciará uma novas interações enviando "
-                    "um arquivo PDF com a certidão que será objeto da análise. Antes de iniciar seu raciocínio, "
-                    "o primeiro passo será ler o documento e coletar todas as palavras/tokens dele. Assim, "
-                    "antes de responder, aguarde o envio do arquivo PDF pelo usuário. Formato de Resposta:Apresente "
-                    "as informações extraídas da certidão no mesmo formato do exemplo de análise, utilizando as seções "
-                    "\"Proprietário Atual\", \"Gravames/Restrições\" e \"Observações\" e \"Situação do Imóvel\"."]
-            },
-            {
-                "role": "user",
-                "parts": pdf_text
-            },
-        ])
-
-        convo.send_message("Pode analisar a certidão fornecida!")
-
-    return convo
+        response = model.generate_content(optimized_prompt)
+        return response.text
 
 
 def app():
-    # Título da página no navegador
+    # Título da página no navegador (deve ser a primeira chamada do Streamlit)
     st.set_page_config(page_title="Analisador de Matrículas Imobiliárias")
 
     # Esconde o menu principal e o rodapé do Streamlit
@@ -247,13 +273,11 @@ def app():
     st.markdown(hide_default_format, unsafe_allow_html=True)
 
     # Seção central da página, onde o conteúdo será exibido
-    st.markdown("<h1 style='text-align: center;'>iAnalisador - Matrículas</h1>",
-                unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>iAnalisador - Matrículas</h1>", unsafe_allow_html=True)
 
     # Sidebar com o widget de upload de arquivo PDF
     st.sidebar.markdown("<h2 style='text-align: center;'>iAnalisador</h2>", unsafe_allow_html=True)
-    st.sidebar.markdown("<h5 style='text-align: center;'>v0.5 (beta)</h5>",
-                        unsafe_allow_html=True)
+    st.sidebar.markdown("<h5 style='text-align: center;'>v0.5 (beta)</h5>", unsafe_allow_html=True)
     st.sidebar.subheader("Instruções")
     st.sidebar.write("Verifique se o arquivo PDF:\n"
                      "1. Contém todas as páginas da certidão\n"
@@ -262,9 +286,38 @@ def app():
     st.sidebar.markdown("<h4 style='text-align: center;'>Envio de Arquivo</h4>", unsafe_allow_html=True)
     uploaded_file = handle_file_upload()
     result = handle_pdf_analysis(uploaded_file)
+
     if result:
-        st.markdown(f"<h2 style='text-align: center;'>Resultado da Análise</h2>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center;'>{result}</p>", unsafe_allow_html=True)
+        # Exibir a situação do imóvel
+        situacao = result.get("situacao_imovel")
+        if situacao == "APTO":
+            st.success("O imóvel está APTO.", icon="✅")
+        else:
+            st.error("O imóvel está INAPTO.", icon="🚨")
+
+        # Exibir dados do proprietário
+        with st.container():
+            st.subheader("Proprietário Atual")
+            proprietario = result.get("proprietario_atual", {})
+            for key, value in proprietario.items():
+                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+
+        # Exibir gravames
+        st.subheader("Gravames/Restrições")
+        gravames = result.get("gravames_restricoes", [])
+        if gravames:
+            for gravame in gravames:
+                with st.expander(gravame.get("tipo", "Gravame")):
+                    for key, value in gravame.items():
+                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+        else:
+            st.write("Não há gravames ou restrições.")
+
+        # Exibir observações
+        with st.container():
+            st.subheader("Observações")
+            observacoes = result.get("observacoes", "Não há observações.")
+            st.write(observacoes)
 
     st.sidebar.markdown(footer, unsafe_allow_html=True)
 
