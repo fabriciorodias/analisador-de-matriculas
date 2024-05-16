@@ -1,6 +1,6 @@
 """
 Analisador de Matrículas Imobiliárias para Operações de Crédito
-Versão: 0.5
+Versão: 0.8 (beta)
 Por: @fabriciorodias
 """
 import logging

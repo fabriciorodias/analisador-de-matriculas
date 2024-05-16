@@ -1,3 +1,4 @@
+# Arquivo com os modelos de dados para a API de análise de imóveis
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date
