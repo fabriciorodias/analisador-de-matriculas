@@ -94,44 +94,33 @@ def extract_pdf_pages(file) -> list[str]:
     progress_bar = st.progress(0, progress_text)
     progress_step = 1 / num_pages
 
-    # Para cada página no PDF
-    for index in range(num_pages):
-        # Extrai o texto da página
-        page = pdf_reader.pages[index].extract_text()
-        word_count = len(page.split())
-        logging.info(f"Texto extraído da página {index}: {page[:100]}... (total de {word_count} palavras)")
+    # Verifica apenas a primeira página para determinar se o PDF é de texto ou escaneado
+    first_page = pdf_reader.pages[0].extract_text()
+    first_page_word_count = len(first_page.split())
+    logging.info(
+        f"Texto extraído da primeira página: {first_page[:100]}... (total de {first_page_word_count} palavras)")
 
-        # Se menos de 100 palavras foram extraídas, assume que a página é uma imagem escaneada
-        # ATENÇÃO!!!!!!!: Corrigir para que, uma vez que tenha chegado aqui na primeira iteração, não
-        # seja necessário verificar as demais páginas para a existência de texto, tratar todas
-        # as páginas como imagens escaneadas.
-        if word_count < 100:
-            logging.info(f"Página {index} parece ser de um documento escaneado. Inicializando OCR...")
-            images = convert_pdf_to_jpeg(file)
-            logging.info(f"Imagem extraída do PDF salva em: {images}")
-            logging.info("Chamando a função de extração de texto da imagem...")
+    all_pages_as_images = first_page_word_count < 100
 
-            # DESATIVADO para testes com Tesseract OCR
-            # Extrai o texto da imagem com a API da OpenAI (GPT-4o)
-            # parts = get_text_from_image_with_vision(output_file_path)
-
-            # Itera sobre todas as imagens (uma por página) e extrai o texto com Tesseract OCR
-            for i, image in enumerate(images):
-                text_from_image = get_text_from_image_with_tesseract(image)
-                parts.append(f"--- PAGE {i} (OCR) ---")
-                parts.append(text_from_image)
-                # Atualiza a barra de progresso
-                progress_bar.progress(min(1.0, progress_step * (index + 1 + i)), progress_text)
-
-            break  # Todas as páginas foram tratadas como imagens, então sair do loop
-
-        # Append the page text to the parts list
-        parts.append(f"--- PAGE {index} ---")
-        parts.append(page)
+    if all_pages_as_images:
+        logging.info("Primeira página parece ser de um documento escaneado. Inicializando OCR para todas as páginas...")
+        images = convert_pdf_to_jpeg(file)
+        for i, image in enumerate(images):
+            text_from_image = get_text_from_image_with_tesseract(image)
+            parts.append(f"--- PAGE {i} (OCR) ---")
+            parts.append(text_from_image)
+            progress_bar.progress(min(1.0, progress_step * (i + 1)), f"Parece que o PDF é um documento "
+                                                                     f"escaneado. {progress_text}")
+    else:
+        logging.info("Documento identificado como PDF de texto.")
+        for index in range(num_pages):
+            page = pdf_reader.pages[index].extract_text()
+            parts.append(f"--- PAGE {index} ---")
+            parts.append(page)
+            progress_bar.progress(min(1.0, progress_step * (index + 1)), progress_text)
 
     logging.info("Extração de texto do PDF concluída.")
     progress_bar.empty()
-
     return parts
 
 
@@ -149,7 +138,6 @@ def convert_pdf_to_jpeg(uploaded_file):
         tmp.seek(0)
         tmp_path = tmp.name
 
-    images = []
     try:
         logging.info(f"Conteúdo da variável 'tmp_path': {tmp_path}")
         images = convert_from_path(tmp_path)
@@ -161,6 +149,8 @@ def convert_pdf_to_jpeg(uploaded_file):
                 jpeg_paths.append(output_file_path)
     except PDFPageCountError:
         st.error("O arquivo enviado não é um arquivo PDF válido.")
+    finally:
+        os.remove(tmp_path)
 
     return jpeg_paths
 
