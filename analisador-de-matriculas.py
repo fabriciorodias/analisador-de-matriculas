@@ -21,6 +21,7 @@ from prompts import generate_optimized_prompt
 import json
 import re
 from pydantic import ValidationError
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -39,29 +40,29 @@ genai.configure(api_key=G_KEY)
 
 # Set up the model
 generation_config = {
-  "temperature": 1,
-  "top_p": 0.95,
-  "top_k": 0,
-  "max_output_tokens": 8192,
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 0,
+    "max_output_tokens": 8192,
 }
 
 safety_settings = [
-  {
-    "category": "HARM_CATEGORY_HARASSMENT",
-    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-  },
-  {
-    "category": "HARM_CATEGORY_HATE_SPEECH",
-    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-  },
-  {
-    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-  },
-  {
-    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-  },
+    {
+        "category": "HARM_CATEGORY_HARASSMENT",
+        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    },
+    {
+        "category": "HARM_CATEGORY_HATE_SPEECH",
+        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    },
+    {
+        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    },
+    {
+        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+    },
 ]
 
 # noinspection PyTypeChecker
@@ -104,7 +105,6 @@ def extract_json(text_response: str) -> list:
     return json_objects
 
 
-
 # --------------------------------------------------------------
 # Função para validar objetos JSON com um modelo Pydantic
 # --------------------------------------------------------------
@@ -126,7 +126,34 @@ def validate_json_with_model(model_class, json_data):
             validation_errors.append({"error": str(e), "data": json_data})
     else:
         raise ValueError("Invalid JSON data type. Expected dict or list.")
+
+    # Verificar se a chave 'resultado_analise' está presente e preservar a estrutura original
+    for item in validated_data:
+        if "resultado_analise" not in item:
+            original_item = next((d for d in json_data if d.get("resultado_analise")), None)
+            if original_item:
+                item["resultado_analise"] = original_item["resultado_analise"]
+
     return validated_data, validation_errors
+
+
+# --------------------------------------------------------------
+# Funções auxiliares para cálculos de datas e prazos
+# --------------------------------------------------------------
+def calcular_data_validade(data_emissao_str, prazo_validade=180):
+    data_emissao = datetime.strptime(data_emissao_str, "%Y-%m-%d")
+    data_validade = data_emissao + timedelta(days=prazo_validade)
+    return data_validade.strftime("%Y-%m-%d")
+
+
+def calcular_prazo_cadeia_sucessoria(data_emissao_str, matriculas_originarias=[]):
+    data_emissao = datetime.strptime(data_emissao_str, "%Y-%m-%d")
+    tempos_cadeia = []
+    for data_nascimento_str in matriculas_originarias:
+        data_nascimento = datetime.strptime(data_nascimento_str, "%Y-%m-%d")
+        tempo_total = (data_emissao - data_nascimento).days
+        tempos_cadeia.append(tempo_total)
+    return tempos_cadeia
 
 
 # --------------------------------------------------------------
@@ -233,14 +260,55 @@ def handle_pdf_analysis(uploaded_file) -> dict:
         logging.info("Análise concluída. Extraindo e validando JSON...")
 
         json_objects = extract_json(response_text)
+        logging.info(f"JSON extraído: {json_objects}")
         validated, errors = validate_json_with_model(TextoAnalise, json_objects)
 
         if errors:
             st.error("Erros na validação do JSON: " + str(errors))
             return {}
 
-        logging.info("Enviando resultado formatado para exibição...")
-        return validated[0] if validated else {}
+        # Calcular data de validade e prazo da cadeia sucessória
+        analysis_result = validated[0] if validated else {}
+        logging.info(f"Analysis result after validation: {analysis_result}")
+
+        # Verifique se a chave 'resultado_analise' existe no dicionário
+        resultado_analise = analysis_result.get("resultado_analise")
+        if not resultado_analise:
+            logging.warning("Chave 'resultado_analise' não encontrada no resultado da análise. Criando chave padrão.")
+            resultado_analise = {}
+            analysis_result["resultado_analise"] = resultado_analise
+
+        logging.info(f"Resultado da análise antes da atualização: {resultado_analise}")
+
+        data_emissao = resultado_analise.get("data_emissao", None)
+
+        # Verifica se a data de emissão é válida antes de calcular a data de validade
+        if data_emissao and data_emissao != "N/A":
+            try:
+                # Verifique se a data está no formato correto antes de converter
+                if re.match(r'\d{4}-\d{2}-\d{2}', data_emissao):
+                    datetime.strptime(data_emissao, "%Y-%m-%d")
+                    prazo_validade_dias = 180  # Assumindo 180 dias se não especificado
+                    data_validade = calcular_data_validade(data_emissao, prazo_validade_dias)
+                    matriculas_originarias = resultado_analise.get("matriculas_originarias", [])
+                    prazo_cadeia = calcular_prazo_cadeia_sucessoria(data_emissao, matriculas_originarias)
+                    resultado_analise["vigente_ate"] = data_validade
+                    resultado_analise["prazo_cadeia_sucessoria"] = prazo_cadeia
+                else:
+                    logging.error("Formato de data de emissão inválido.")
+                    resultado_analise["vigente_ate"] = "Data de emissão inválida"
+                    resultado_analise["prazo_cadeia_sucessoria"] = "Data de emissão inválida"
+            except ValueError as e:
+                logging.error(f"Erro ao converter data de emissão: {e}")
+                resultado_analise["vigente_ate"] = "Data de emissão inválida"
+                resultado_analise["prazo_cadeia_sucessoria"] = "Data de emissão inválida"
+        else:
+            resultado_analise["vigente_ate"] = "Data de emissão inválida"
+            resultado_analise["prazo_cadeia_sucessoria"] = "Data de emissão inválida"
+
+        logging.info(f"Resultado da análise após a atualização: {analysis_result['resultado_analise']}")
+        return analysis_result
+
     return {}
 
 
@@ -259,8 +327,8 @@ def start_chat_with_pdf_text(pdf_text: list[str]):
 
 
 def app():
-    # Título da página no navegador (deve ser a primeira chamada do Streamlit)
-    st.set_page_config(page_title="Analisador de Matrículas Imobiliárias")
+    # Título da página no navegador
+    st.set_page_config(page_title="iAnalisadora - Matrículas Imobiliárias")
 
     # Esconde o menu principal e o rodapé do Streamlit
     hide_default_format = """
@@ -273,11 +341,11 @@ def app():
     st.markdown(hide_default_format, unsafe_allow_html=True)
 
     # Seção central da página, onde o conteúdo será exibido
-    st.markdown("<h1 style='text-align: center;'>iAnalisador - Matrículas</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>iAnalisadora - Matrículas</h1>", unsafe_allow_html=True)
 
     # Sidebar com o widget de upload de arquivo PDF
-    st.sidebar.markdown("<h2 style='text-align: center;'>iAnalisador</h2>", unsafe_allow_html=True)
-    st.sidebar.markdown("<h5 style='text-align: center;'>v0.5 (beta)</h5>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h2 style='text-align: center;'>iAnalisadora</h2>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h5 style='text-align: center;'>v0.8 (beta)</h5>", unsafe_allow_html=True)
     st.sidebar.subheader("Instruções")
     st.sidebar.write("Verifique se o arquivo PDF:\n"
                      "1. Contém todas as páginas da certidão\n"
@@ -285,39 +353,69 @@ def app():
                      "3. Se o texto está legível\n")
     st.sidebar.markdown("<h4 style='text-align: center;'>Envio de Arquivo</h4>", unsafe_allow_html=True)
     uploaded_file = handle_file_upload()
-    result = handle_pdf_analysis(uploaded_file)
 
-    if result:
-        # Exibir a situação do imóvel
-        situacao = result.get("situacao_imovel")
-        if situacao == "APTO":
+    # Usar variável de estado para armazenar resultado da análise
+    if 'analysis_result' not in st.session_state:
+        st.session_state.analysis_result = None
+
+    if uploaded_file is not None:
+        result = handle_pdf_analysis(uploaded_file)
+        st.session_state.analysis_result = result
+
+    if st.session_state.analysis_result:
+        analysis_result = st.session_state.analysis_result
+
+        situacao_imovel = analysis_result.get("situacao_imovel", "INAPTO")
+        if situacao_imovel == "APTO":
             st.success("O imóvel está APTO.", icon="✅")
         else:
             st.error("O imóvel está INAPTO.", icon="🚨")
 
-        # Exibir dados do proprietário
         with st.container():
             st.subheader("Proprietário Atual")
-            proprietario = result.get("proprietario_atual", {})
-            for key, value in proprietario.items():
-                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+            proprietario = analysis_result.get("proprietario_atual", {})
+            nome_completo = proprietario.get("nome_completo", "Proprietário")
+            with st.expander(nome_completo):
+                for key, value in proprietario.items():
+                    if key != "nome_completo":
+                        st.write(f"**{key.replace('_', ' ').capitalize()}:** {value}")
 
-        # Exibir gravames
-        st.subheader("Gravames/Restrições")
-        gravames = result.get("gravames_restricoes", [])
+        gravames = analysis_result.get("gravames_restricoes", [])
         if gravames:
+            st.subheader("Gravames e Restrições Vigentes")
             for gravame in gravames:
-                with st.expander(gravame.get("tipo", "Gravame")):
+                tipo = gravame.get("tipo", "Gravame")
+                numero_registro = gravame.get("numero_registro", "N/A")
+                with st.expander(f"{tipo} - {numero_registro}"):
                     for key, value in gravame.items():
-                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                        st.write(f"**{key.replace('_', ' ').capitalize()}:** {value}")
         else:
-            st.write("Não há gravames ou restrições.")
+            st.subheader("Gravames e Restrições Vigentes")
+            st.write("Não há gravames ou restrições vigentes.")
 
-        # Exibir observações
         with st.container():
-            st.subheader("Observações")
-            observacoes = result.get("observacoes", "Não há observações.")
+            st.subheader("Fatos Relevantes")
+            observacoes = analysis_result.get("observacoes", "Nenhuma observação disponível.")
             st.write(observacoes)
+
+        with st.container():
+            st.subheader("Data da Certidão")
+            resultado_analise = analysis_result.get("resultado_analise", {})
+            data_emissao = resultado_analise.get("data_emissao", "N/A")
+            if data_emissao != "N/A":
+                data_emissao = datetime.strptime(data_emissao, "%Y-%m-%d").strftime("%d-%m-%Y")
+            vigente_ate = resultado_analise.get("vigente_ate", "N/A")
+            if vigente_ate != "N/A":
+                vigente_ate_dt = datetime.strptime(vigente_ate, "%Y-%m-%d")
+                vigente_ate = vigente_ate_dt.strftime("%d-%m-%Y")
+                hoje = datetime.now()
+                icone = "✅" if vigente_ate_dt >= hoje else "🚨"
+            else:
+                icone = ""
+            prazo_cadeia = resultado_analise.get("prazo_cadeia_sucessoria", "N/A")
+            st.write(f"**Data de emissão:** {data_emissao}")
+            st.write(f"**Vigente até:** {vigente_ate} {icone}")
+            # st.write(f"**Prazo da cadeia sucessória:** {prazo_cadeia}")
 
     st.sidebar.markdown(footer, unsafe_allow_html=True)
 
