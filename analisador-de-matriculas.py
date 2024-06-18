@@ -23,10 +23,15 @@ import re
 from pydantic import ValidationError
 from datetime import datetime, timedelta
 from google_gemini_adapter import get_google_gemini_model
+from openai_gpt4o_adapter import get_completion_from_openai_gpt
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-model = get_google_gemini_model()
+
+def get_completion_from_google_gemini(prompt: str):
+    model = get_google_gemini_model()
+    response = model.generate_content(prompt)
+    return response
 
 
 # --------------------------------------------------------------
@@ -280,8 +285,9 @@ def start_chat_with_pdf_text(pdf_text: list[str]):
     optimized_prompt = generate_optimized_prompt(document_text)
 
     with st.spinner('Texto da certidão em análise...'):
-        response = model.generate_content(optimized_prompt)
-        return response.text
+        # response = get_completion_from_google_gemini(optimized_prompt).text
+        response = get_completion_from_openai_gpt(optimized_prompt)
+        return response
 
 
 def app():
